@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Conversation Timestamps</title>
+  <style>
+    :root {
+      --bg: #1e1f20;
+      --card-bg: #282a2c;
+      --text: #e3e3e3;
+      --text-muted: #9aa0a6;
+      --border: rgba(255, 255, 255, 0.1);
+      --accent: #8ab4f8;
+      --success: #81c995;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #ffffff;
+        --card-bg: #f8f9fa;
+        --text: #1f1f1f;
+        --text-muted: #5f6368;
+        --border: rgba(0, 0, 0, 0.1);
+        --accent: #1a73e8;
+        --success: #188038;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 280px;
+      font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .header-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+    }
+
+    .header-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background: rgba(129, 201, 149, 0.15);
+      color: var(--success);
+      font-weight: 500;
+      margin-bottom: 12px;
+    }
+
+    .badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: var(--success);
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+
+    .card-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+    }
+
+    .card-label {
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .card-value {
+      font-weight: 500;
+      font-size: 12.5px;
+    }
+
+    .help-text {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      line-height: 1.4;
+      background: transparent;
+      border-left: 2px solid var(--accent);
+      padding-left: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <img src="icons/icon48.png" alt="Icon" class="header-icon">
+    <div class="header-title">Gemini Timestamps</div>
+  </div>
+
+  <div class="badge-status">
+    <span class="badge-dot"></span>
+    <span>Ekstensi Aktif</span>
+  </div>
+
+  <div class="card">
+    <div class="card-row">
+      <span class="card-label">Percakapan Tercatat:</span>
+      <span class="card-value" id="count-value">-</span>
+    </div>
+    <div class="card-row">
+      <span class="card-label">Sinkronisasi Akun:</span>
+      <span class="card-value" id="sync-value" style="color: var(--success);">Otomatis (Sync)</span>
+    </div>
+  </div>
+
+  <div class="help-text">
+    Arahkan kursor mouse ke judul percakapan di sidebar Gemini untuk melihat tanggal dan jam dibuat serta diedit.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

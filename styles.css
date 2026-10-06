@@ -1,0 +1,65 @@
+/**
+ * Gemini Conversation Timestamps - Tooltip Styles
+ * Super lightweight, hardware-accelerated, dark/light adaptive
+ */
+
+#gct-tooltip-container {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(2px) scale(0.98);
+  transition: opacity 0.12s ease-out, transform 0.12s ease-out, visibility 0.12s;
+  
+  /* Gemini Dark theme default */
+  background: rgba(30, 31, 35, 0.94);
+  color: #e3e3e3;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 11px;
+  font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.45;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  white-space: nowrap;
+  user-select: none;
+  contain: layout style paint;
+}
+
+/* Light theme adaptive */
+@media (prefers-color-scheme: light) {
+  body:not(.dark-theme) #gct-tooltip-container,
+  html[light] #gct-tooltip-container {
+    background: rgba(255, 255, 255, 0.96);
+    color: #1f1f1f;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  }
+}
+
+/* Visible state */
+#gct-tooltip-container.gct-show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+}
+
+/* Rows */
+.gct-row {
+  display: block;
+}
+
+.gct-row-created {
+  color: inherit;
+  opacity: 0.92;
+}
+
+.gct-row-edited {
+  color: inherit;
+  opacity: 0.92;
+  margin-top: 2px;
+}
