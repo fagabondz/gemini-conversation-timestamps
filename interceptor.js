@@ -1,156 +1,212 @@
 /**
- * Gemini Conversation Timestamps - Network Interceptor
+ * Gemini Conversation Timestamps - Network Interceptor (v2)
  * Runs in MAIN world at document_start to intercept API responses safely.
+ *
+ * CHANGES v2:
+ *  - Split routing: sidebar (MaZiqc) only extracts `edited`; individual conversation
+ *    (hNvQHb / stream) extracts both `created` (first msg) and `edited` (last msg).
+ *  - Stricter proto timestamp regex: requires [epoch10, nanos1-9] bracket format.
+ *  - `source` field appended to TIMESTAMPS_FOUND payload so content.js can apply
+ *    correct merge priority rules.
+ *  - ACTIVE_INTERACTION broadcast only for conversation-specific API calls.
  */
 (function () {
   'use strict';
 
-  // Prevent double-injection
   if (window.__gct_interceptor_loaded) return;
   window.__gct_interceptor_loaded = true;
 
   const SOURCE_TAG = 'gemini-timestamp-interceptor';
 
-  /**
-   * Helper to normalize conversation IDs (strip 'c_' prefix if present)
-   */
+  /* ─────────────────────────────── helpers ─────────────────────────────── */
+
   function normalizeId(id) {
     if (!id || typeof id !== 'string') return '';
     return id.startsWith('c_') ? id.slice(2) : id;
   }
 
-  /**
-   * Helper to get active conversation ID from the current page URL
-   */
   function getActiveConversationId() {
     try {
-      const match = window.location.pathname.match(/\/app\/([a-zA-Z0-9_-]+)/);
-      if (match && match[1]) {
-        const id = normalizeId(match[1]);
+      const m = window.location.pathname.match(/\/app\/([a-zA-Z0-9_-]+)/);
+      if (m && m[1]) {
+        const id = normalizeId(m[1]);
         if (id && id !== 'new') return id;
       }
     } catch (_) {}
     return null;
   }
 
-  /**
-   * Safely posts extracted data to content script (isolated world)
-   */
   function broadcast(type, payload) {
     try {
-      window.postMessage(
-        {
-          source: SOURCE_TAG,
-          type: type,
-          payload: payload,
-        },
-        window.location.origin
-      );
+      window.postMessage({ source: SOURCE_TAG, type, payload }, window.location.origin);
     } catch (_) {}
   }
 
+  /* ───────────────────────────── timestamp parsing ─────────────────────── */
+
   /**
-   * Extract conversation IDs and their created/edited timestamps from text
+   * STRICTER proto timestamp regex: matches ONLY `[10-digit-epoch, 1-9-digit-nanos]`
+   * bracket pairs. This eliminates false positives from bare numbers.
+   *
+   * Valid epoch range covered: Jan 2023 (1672531200) → Dec 2036 (2113401600)
    */
-  function parseTimestamps(text) {
-    if (!text || typeof text !== 'string') return;
-
-    try {
-      const results = [];
-      const seen = new Map();
-
-      // Gemini conversation blocks typically split by '"c_'
-      const blocks = text.split('"c_');
-      if (blocks.length > 1) {
-        for (let i = 1; i < blocks.length; i++) {
-          const block = blocks[i];
-          const idMatch = block.match(/^([a-zA-Z0-9_-]{4,128})/);
-          if (!idMatch) continue;
-
-          const normId = normalizeId(idMatch[1]);
-          const tsList = [];
-
-          // 1. Match Google Proto Timestamp [seconds, nanos] or [seconds]
-          // Valid epoch range: 2023 (~1672531200) to 2035 (~2051222400)
-          const protoRegex = /\[\s*(1[6-9]\d{8}|2\d{9})(?:\s*,\s*\d+)?\s*\]/g;
-          let m;
-          while ((m = protoRegex.exec(block)) !== null) {
-            tsList.push(parseInt(m[1], 10) * 1000);
-          }
-
-          // 2. Fallback to bare epoch timestamps in the same valid range
-          if (tsList.length === 0) {
-            const bareRegex = /\b(1[6-9]\d{8}|2\d{9})\b/g;
-            while ((m = bareRegex.exec(block)) !== null) {
-              tsList.push(parseInt(m[1], 10) * 1000);
-            }
-          }
-
-          if (tsList.length > 0) {
-            tsList.sort((a, b) => a - b);
-            const created = tsList[0];
-            const edited = tsList[tsList.length - 1];
-
-            if (!seen.has(normId)) {
-              seen.set(normId, { id: normId, created: created, edited: edited });
-            } else {
-              const prev = seen.get(normId);
-              prev.created = Math.min(prev.created, created);
-              prev.edited = Math.max(prev.edited, edited);
-            }
-          }
-        }
-      }
-
-      // Also check active conversation turns (e.g. single chat view RPCs like hNvQHb)
-      const activeId = getActiveConversationId();
-      if (activeId) {
-        const tsList = [];
-        const protoRegex = /\[\s*(1[6-9]\d{8}|2\d{9})(?:\s*,\s*\d+)?\s*\]/g;
-        let m;
-        // Limit search to prevent overhead on enormous payloads
-        const searchSample = text.length > 300000 ? text.slice(0, 300000) : text;
-        while ((m = protoRegex.exec(searchSample)) !== null) {
-          tsList.push(parseInt(m[1], 10) * 1000);
-        }
-
-        if (tsList.length > 0) {
-          tsList.sort((a, b) => a - b);
-          const created = tsList[0];
-          const edited = tsList[tsList.length - 1];
-
-          if (!seen.has(activeId)) {
-            seen.set(activeId, { id: activeId, created: created, edited: edited });
-          } else {
-            const prev = seen.get(activeId);
-            prev.created = Math.min(prev.created, created);
-            prev.edited = Math.max(prev.edited, edited);
-          }
-        }
-      }
-
-      if (seen.size > 0) {
-        const items = Array.from(seen.values());
-        broadcast('TIMESTAMPS_FOUND', items);
-      }
-    } catch (_) {}
+  function makeProtoRe() {
+    return /\[\s*(1[6-9]\d{8}|20\d{8})\s*,\s*\d{1,9}\s*\]/g;
   }
 
   /**
-   * Check if a URL belongs to batchexecute or Gemini data APIs
+   * Returns the FIRST proto timestamp found in `text` as milliseconds, or null.
+   * Searches at most `limit` characters from the start.
    */
-  function isTargetUrl(url) {
-    if (!url) return false;
-    const str = url.toString();
+  function firstTimestamp(text, limit) {
+    const sample = limit && text.length > limit ? text.slice(0, limit) : text;
+    const re = makeProtoRe();
+    const m = re.exec(sample);
+    return m ? parseInt(m[1], 10) * 1000 : null;
+  }
+
+  /**
+   * Returns ALL proto timestamps found in `text` as an ordered array of milliseconds.
+   * Searches at most `limit` characters.
+   */
+  function allTimestamps(text, limit) {
+    const sample = limit && text.length > limit ? text.slice(0, limit) : text;
+    const re = makeProtoRe();
+    const out = [];
+    let m;
+    let guard = 0;
+    while ((m = re.exec(sample)) !== null && guard++ < 2000) {
+      out.push(parseInt(m[1], 10) * 1000);
+    }
+    return out;
+  }
+
+  /* ──────────────────────────── URL classifiers ────────────────────────── */
+
+  /**
+   * Sidebar conversation list response (batchexecute?rpcids=MaZiqc).
+   * Contains ONE timestamp per conversation = LAST ACTIVITY (edited) time.
+   * Creation time is NOT reliably present here.
+   */
+  function isSidebarUrl(url) {
+    return url.includes('MaZiqc');
+  }
+
+  /**
+   * Individual conversation load (hNvQHb) or streaming generation.
+   * Contains per-message timestamps in chronological order:
+   *   first = created, last = edited.
+   */
+  function isConversationUrl(url) {
     return (
-      str.includes('batchexecute') ||
-      str.includes('BardChatUi') ||
-      str.includes('assistant.vertical.stream') ||
-      str.includes('streamGenerateContent')
+      url.includes('hNvQHb') ||
+      url.includes('streamGenerateContent') ||
+      url.includes('assistant.vertical.stream')
     );
   }
 
-  // --- 1. Intercept XMLHttpRequest ---
+  /** Any Gemini data/RPC endpoint worth intercepting. */
+  function isTargetUrl(url) {
+    if (!url) return false;
+    const s = url.toString();
+    return (
+      s.includes('batchexecute') ||
+      s.includes('BardChatUi') ||
+      s.includes('assistant.vertical.stream') ||
+      s.includes('streamGenerateContent')
+    );
+  }
+
+  /* ─────────────────────────── response parsers ────────────────────────── */
+
+  /**
+   * Parse SIDEBAR LIST response (MaZiqc).
+   *
+   * Design decision: sidebar only provides last-activity timestamps, so we
+   * extract ONLY `edited`. `created` is intentionally omitted to prevent
+   * stale/wrong server metadata from being stored as creation time.
+   *
+   * content.js will handle `created` via:
+   *   a) Local tracking when user sends first message (lvc=true, highest priority).
+   *   b) Individual conversation response (hNvQHb), which has per-message timestamps.
+   */
+  function parseSidebarResponse(text) {
+    const seen = new Map();
+    const blocks = text.split('"c_');
+
+    for (let i = 1; i < blocks.length; i++) {
+      const block = blocks[i];
+      const idMatch = block.match(/^([a-zA-Z0-9_-]{4,128})/);
+      if (!idMatch) continue;
+
+      const normId = normalizeId(idMatch[1]);
+      if (!normId || seen.has(normId)) continue;
+
+      // Take FIRST proto timestamp in the first 2 KB of this block.
+      // In the Gemini sidebar response, this position corresponds to the
+      // conversation's last-modified time (= edited).
+      const ts = firstTimestamp(block, 2048);
+      if (ts && ts > 1672531200000) {
+        seen.set(normId, {
+          id: normId,
+          created: null,  // explicitly null → content.js must not overwrite lvc-created
+          edited: ts,
+          source: 'sidebar',
+        });
+      }
+    }
+
+    if (seen.size > 0) {
+      broadcast('TIMESTAMPS_FOUND', Array.from(seen.values()));
+    }
+  }
+
+  /**
+   * Parse INDIVIDUAL CONVERSATION response (hNvQHb / stream).
+   *
+   * Messages appear in chronological order in the protobuf response, so:
+   *   • FIRST proto timestamp  = timestamp of first user message  (→ created)
+   *   • LAST  proto timestamp  = timestamp of last  user message  (→ edited)
+   *
+   * This is Approach 2: "Parsing First/Last Message Timestamps".
+   * Server data here is reasonably accurate for message-level timing.
+   * content.js will still respect any existing lvc=true created value.
+   */
+  function parseConversationResponse(text, conversationId) {
+    if (!conversationId) return;
+
+    // Limit payload scan to 500 KB for performance safety
+    const tsList = allTimestamps(text, 500000);
+    if (tsList.length === 0) return;
+
+    // tsList is in order-of-appearance = chronological for message payloads
+    const created = tsList[0];
+    const edited = tsList[tsList.length - 1];
+
+    if (created > 1672531200000 && edited >= created) {
+      broadcast('TIMESTAMPS_FOUND', [{
+        id: conversationId,
+        created,
+        edited,
+        source: 'conversation',
+      }]);
+    }
+  }
+
+  /**
+   * Route a completed response to the appropriate parser.
+   */
+  function routeResponse(urlStr, text) {
+    if (isSidebarUrl(urlStr)) {
+      parseSidebarResponse(text);
+    } else if (isConversationUrl(urlStr)) {
+      parseConversationResponse(text, getActiveConversationId());
+    }
+    // Other endpoints are ignored to minimise false positives.
+  }
+
+  /* ───────────────────────────── XHR intercept ────────────────────────── */
+
   try {
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;
@@ -162,23 +218,21 @@
 
     XMLHttpRequest.prototype.send = function () {
       const xhr = this;
-      const url = xhr._gct_url;
+      const urlStr = (xhr._gct_url || '').toString();
 
-      if (isTargetUrl(url)) {
-        xhr.addEventListener(
-          'load',
-          function () {
-            if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
-              parseTimestamps(xhr.responseText);
-            }
-          },
-          { passive: true }
-        );
+      if (isTargetUrl(urlStr)) {
+        xhr.addEventListener('load', function () {
+          if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
+            routeResponse(urlStr, xhr.responseText);
+          }
+        }, { passive: true });
 
-        // Also track that an interaction occurred in current conversation
-        const activeId = getActiveConversationId();
-        if (activeId) {
-          broadcast('ACTIVE_INTERACTION', { id: activeId, timestamp: Date.now() });
+        // Signal active interaction only for conversation-specific calls
+        if (isConversationUrl(urlStr)) {
+          const activeId = getActiveConversationId();
+          if (activeId) {
+            broadcast('ACTIVE_INTERACTION', { id: activeId, timestamp: Date.now() });
+          }
         }
       }
 
@@ -186,27 +240,27 @@
     };
   } catch (_) {}
 
-  // --- 2. Intercept window.fetch ---
+  /* ─────────────────────────── fetch intercept ────────────────────────── */
+
   try {
     const origFetch = window.fetch;
-    window.fetch = function (input, init) {
-      const url = typeof input === 'string' ? input : input && input.url ? input.url : '';
 
-      if (isTargetUrl(url)) {
-        const activeId = getActiveConversationId();
-        if (activeId) {
-          broadcast('ACTIVE_INTERACTION', { id: activeId, timestamp: Date.now() });
+    window.fetch = function (input, init) {
+      const urlStr = (typeof input === 'string' ? input : (input && input.url) || '').toString();
+
+      if (isTargetUrl(urlStr)) {
+        if (isConversationUrl(urlStr)) {
+          const activeId = getActiveConversationId();
+          if (activeId) {
+            broadcast('ACTIVE_INTERACTION', { id: activeId, timestamp: Date.now() });
+          }
         }
 
         return origFetch.apply(this, arguments).then(function (response) {
           try {
-            const clone = response.clone();
-            clone
-              .text()
-              .then(function (text) {
-                parseTimestamps(text);
-              })
-              .catch(function () {});
+            response.clone().text().then(function (text) {
+              routeResponse(urlStr, text);
+            }).catch(function () {});
           } catch (_) {}
           return response;
         });
@@ -216,38 +270,29 @@
     };
   } catch (_) {}
 
-  // --- 3. Hook Navigation History (SPA Routing) ---
+  /* ──────────────────────── SPA navigation hooks ─────────────────────── */
+
   try {
-    const origPushState = history.pushState;
-    const origReplaceState = history.replaceState;
+    const origPush    = history.pushState;
+    const origReplace = history.replaceState;
+
+    function onNavigate() {
+      const id = getActiveConversationId();
+      if (id) broadcast('NAVIGATED', { id, timestamp: Date.now() });
+    }
 
     history.pushState = function () {
-      const res = origPushState.apply(this, arguments);
-      setTimeout(function () {
-        const id = getActiveConversationId();
-        if (id) {
-          broadcast('NAVIGATED', { id: id, timestamp: Date.now() });
-        }
-      }, 50);
+      const res = origPush.apply(this, arguments);
+      setTimeout(onNavigate, 50);
       return res;
     };
 
     history.replaceState = function () {
-      const res = origReplaceState.apply(this, arguments);
-      setTimeout(function () {
-        const id = getActiveConversationId();
-        if (id) {
-          broadcast('NAVIGATED', { id: id, timestamp: Date.now() });
-        }
-      }, 50);
+      const res = origReplace.apply(this, arguments);
+      setTimeout(onNavigate, 50);
       return res;
     };
 
-    window.addEventListener('popstate', function () {
-      const id = getActiveConversationId();
-      if (id) {
-        broadcast('NAVIGATED', { id: id, timestamp: Date.now() });
-      }
-    });
+    window.addEventListener('popstate', onNavigate);
   } catch (_) {}
 })();

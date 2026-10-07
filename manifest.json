@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gemini Conversation Timestamps",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Menampilkan tanggal & waktu pembuatan dan terakhir diedit saat hover percakapan di sidebar Gemini secara otomatis tersinkron antar perangkat.",
   "icons": {
     "16": "icons/icon16.png",
