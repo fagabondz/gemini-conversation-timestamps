@@ -1,5 +1,8 @@
 # Gemini Conversation Timestamps - Chrome Extension
 
+[![Trakteer](https://trakteer.id/images/embed/trbtn-red-1.png)](https://trakteer.id/username-trakteer-anda)
+[![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/username-kofi-anda)
+
 Ekstensi Chrome sederhana untuk Google Gemini (`gemini.google.com`). Ekstensi ini menambahkan *tooltip* kecil saat kursor diarahkan (*hover*) ke riwayat percakapan di sidebar, menampilkan informasi tanggal dan jam percakapan dibuat serta kapan terakhir kali diubah.
 
 ---
